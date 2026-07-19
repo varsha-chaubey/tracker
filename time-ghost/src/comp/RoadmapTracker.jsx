@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-
+import booImg from "../../public/hey.png";
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 
 const TARGET_SECONDS = 5 * 60 * 60; // 5 hours
@@ -255,9 +255,12 @@ export default function App() {
 
   if (loading) {
     return (
-      <div style={{ ...styles.wrap, alignItems: "center", justifyContent: "center", display: "flex" }}>
+      <div style={{ paddingTop: "150px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
         <style>{FONT_IMPORT}</style>
-        <div style={{ color: "#8A93A6", fontFamily: "'JetBrains Mono', monospace" }}>loading tracker...</div>
+        <div style={{ color: "#8A93A6", fontFamily: "'JetBrains Mono', monospace" }}>
+         <h1 style={{textAlign:"center"}}>Waking Up....</h1>
+          <img src={booImg} alt="loading" style={{textAlign:"center"}}/>   
+        </div>
       </div>
     );
   }
@@ -269,7 +272,7 @@ export default function App() {
       <header style={styles.header}>
         <div>
           <div style={styles.eyebrow}>30-DAY BUILD LOG</div>
-          <h1 style={styles.h1}>Study Tracker</h1>
+          <h1 style={styles.h1}>Time Ghost👻</h1>
         </div>
         <div style={styles.statRow}>
           <Stat label="Green days" value={`${overallStats.greenDays}/30`} />
