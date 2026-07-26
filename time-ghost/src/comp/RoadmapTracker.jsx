@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import booImg from "../../public/hey.png";
+import NavBar from "./NavBar";
 const FONT_IMPORT = `@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');`;
 
 const TARGET_SECONDS = 5 * 60 * 60; // 5 hours
@@ -268,12 +269,13 @@ export default function App() {
   return (
     <div style={styles.wrap}>
       <style>{FONT_IMPORT}</style>
-
       <header style={styles.header}>
         <div>
           <div style={styles.eyebrow}>30-DAY BUILD LOG</div>
           <h1 style={styles.h1}>Time Ghost👻</h1>
         </div>
+
+        <NavBar />
         <div style={styles.statRow}>
           <Stat label="Green days" value={`${overallStats.greenDays}/30`} />
           <Stat label="Streak" value={`${overallStats.streak}d`} />
