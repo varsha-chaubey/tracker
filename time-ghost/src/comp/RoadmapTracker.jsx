@@ -63,7 +63,9 @@ function emptyState() {
       topics: d.topics.map((t, i) => ({ id: `p${i}`, text: t, done: false, custom: false })),
     };
   });
-  return { active: null, days };
+  // startDate = the real calendar date Day 1 began. Set automatically the first time
+  // "Start Studying" is ever clicked — everything else (which day is "today") is computed from it.
+  return { active: null, startDate: null, days };
 }
 
 function fmtHMS(totalSeconds) {
@@ -88,6 +90,39 @@ function fmtDuration(seconds) {
   return `${s}s`;
 }
 
+// ---------- Real calendar-date helpers (drive the "which day is active today" logic) ----------
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+// "YYYY-MM-DD" for the local calendar date — used as a stable key, independent of time-of-day.
+function todayKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function parseDateKey(key) {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+function daysBetweenKeys(startKey, endKey) {
+  const a = parseDateKey(startKey);
+  const b = parseDateKey(endKey);
+  return Math.round((b - a) / 86400000);
+}
+
+function clamp(n, min, max) {
+  return Math.min(max, Math.max(min, n));
+}
+
+function fmtDateKey(key) {
+  if (!key) return "";
+  const d = parseDateKey(key);
+  return d.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+
 export default function App() {
   const [state, setState] = useState(emptyState());
   const [selectedDay, setSelectedDay] = useState(1);
@@ -95,6 +130,7 @@ export default function App() {
   const [saveState, setSaveState] = useState("idle");
   const [newTopicText, setNewTopicText] = useState("");
   const [, forceTick] = useState(0);
+  const [nowKey, setNowKey] = useState(todayKey());
   const saveTimer = useRef(null);
 
   useEffect(() => {
@@ -108,6 +144,7 @@ export default function App() {
           const base = emptyState();
           setState({
             active: result.data.active || null,
+            startDate: result.data.startDate || null,
             days: { ...base.days, ...result.data.days },
           });
         }
@@ -127,6 +164,12 @@ export default function App() {
     const id = setInterval(() => forceTick((n) => n + 1), 1000);
     return () => clearInterval(id);
   }, [state.active]);
+
+  // catches the clock rolling over to a new calendar date even if no timer is running
+  useEffect(() => {
+    const id = setInterval(() => setNowKey(todayKey()), 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const persist = useCallback((next) => {
     setSaveState("saving");
@@ -158,7 +201,14 @@ export default function App() {
   const startSession = () => {
     updateState((prev) => {
       if (prev.active) return prev; // already running somewhere
-      return { ...prev, active: { day: selectedDay, start: Date.now() } };
+      // Lock: you can only ever start today's (real calendar) day — never a past or future one.
+      const activeDay = prev.startDate
+        ? clamp(daysBetweenKeys(prev.startDate, nowKey) + 1, 1, 30)
+        : 1;
+      if (selectedDay !== activeDay) return prev;
+      // First time this is ever clicked, today's calendar date becomes Day 1's date.
+      const startDate = prev.startDate || nowKey;
+      return { ...prev, startDate, active: { day: selectedDay, start: Date.now() } };
     });
   };
 
@@ -175,6 +225,18 @@ export default function App() {
       };
     });
   };
+
+  const activeDayNumber = useMemo(() => {
+    if (!state.startDate) return 1;
+    return clamp(daysBetweenKeys(state.startDate, nowKey) + 1, 1, 30);
+  }, [state.startDate, nowKey]);
+
+  // Keep the view pinned to "today" — this only fires when the real active day actually
+  // changes (i.e. the calendar date rolled over), not on every render.
+  useEffect(() => {
+    setSelectedDay(activeDayNumber);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeDayNumber]);
 
   const toggleTopic = (day, id) => {
     updateState((prev) => {
@@ -234,7 +296,7 @@ export default function App() {
       const day = ROADMAP[i].day;
       const status = dayStatus(day);
       if (status === "green" && !streakBroken) streak++;
-      else if (day <= selectedDay) streakBroken = true;
+      else if (day <= activeDayNumber) streakBroken = true;
     }
     ROADMAP.forEach((d) => {
       const secs = dayStudySeconds(d.day);
@@ -243,13 +305,14 @@ export default function App() {
     });
     return { greenDays, totalHours, streak };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state]);
+  }, [state, activeDayNumber]);
 
   const current = ROADMAP.find((d) => d.day === selectedDay);
   const currentData = state.days[selectedDay] || { sessions: [], topics: [] };
   const secondsToday = dayStudySeconds(selectedDay);
   const isRunningToday = state.active && state.active.day === selectedDay;
   const isRunningElsewhere = state.active && state.active.day !== selectedDay;
+  const isViewingToday = selectedDay === activeDayNumber;
   const pct = Math.min(100, (secondsToday / TARGET_SECONDS) * 100);
   const remaining = TARGET_SECONDS - secondsToday;
   const topicsDone = currentData.topics.filter((t) => t.done).length;
@@ -273,10 +336,14 @@ export default function App() {
         <div>
           <div style={styles.eyebrow}>30-DAY BUILD LOG</div>
           <h1 style={styles.h1}>Time Ghost👻</h1>
+          {state.startDate && (
+            <div style={styles.startedNote}>Day 1 started {fmtDateKey(state.startDate)}</div>
+          )}
         </div>
 
         <NavBar />
         <div style={styles.statRow}>
+          <Stat label="Day" value={`${activeDayNumber}/30`} />
           <Stat label="Green days" value={`${overallStats.greenDays}/30`} />
           <Stat label="Streak" value={`${overallStats.streak}d`} />
           <Stat label="Total hours" value={`${overallStats.totalHours.toFixed(1)}h`} />
@@ -287,12 +354,15 @@ export default function App() {
         <LegendDot color="#5FD68C" label="5h+ complete" />
         <LegendDot color="#F2646C" label="Under 5h" />
         <LegendDot color="#1D222E" label="Not started" />
+        <LegendDot color="#F2A93B" label={`${fmtDateKey(todayKey())}`} />
       </div>
 
       <div style={styles.grid}>
         {ROADMAP.map((d) => {
           const status = dayStatus(d.day);
           const isSelected = d.day === selectedDay;
+          const isToday = d.day === activeDayNumber;
+          const isLocked = d.day > activeDayNumber;
           const bg = status === "green" ? "#5FD68C" : status === "red" ? "#F2646C" : "#1D222E";
           const textColor = status === "empty" ? "#8A93A6" : "#12151C";
           return (
@@ -302,9 +372,11 @@ export default function App() {
               style={{
                 ...styles.cell,
                 background: bg,
-                border: isSelected ? "2px solid #E8E6E0" : "2px solid transparent",
+                opacity: isLocked ? 0.55 : 1,
+                border: isSelected && !isToday ? "2px solid #E8E6E0" : "2px solid transparent",
+                boxShadow: isToday ? "0 0 0 2px #F2A93B" : "none",
               }}
-              title={`Day ${d.day}: ${d.title} — ${fmtDuration(dayStudySeconds(d.day))}`}
+              title={`Day ${d.day}: ${d.title} — ${fmtDuration(dayStudySeconds(d.day))}${isToday ? " (Today)" : ""}`}
             >
               <span style={{ ...styles.cellNum, color: textColor }}>{d.day}</span>
             </button>
@@ -344,7 +416,7 @@ export default function App() {
               <div>
                 {isRunningToday ? (
                   <button style={{ ...styles.timerBtn, background: "#F2646C" }} onClick={stopSession}>Take a Break</button>
-                ) : (
+                ) : isViewingToday ? (
                   <button
                     style={{ ...styles.timerBtn, background: isRunningElsewhere ? "#3A4152" : "#5EC8B8", cursor: isRunningElsewhere ? "not-allowed" : "pointer" }}
                     onClick={startSession}
@@ -352,16 +424,24 @@ export default function App() {
                   >
                     {isRunningElsewhere ? `Day ${state.active.day} running...` : "Start Studying"}
                   </button>
+                ) : (
+                  <div style={styles.lockNote}>
+                    {selectedDay < activeDayNumber
+                      ? `🔒 This day has passed — timer only runs on today (Day ${activeDayNumber})`
+                      : `🔒 Unlocks on Day ${activeDayNumber} — ${selectedDay - activeDayNumber} day(s) away`}
+                  </div>
                 )}
               </div>
             </div>
           </div>
 
           {/* Session log */}
-          <div style={styles.sectionLabel}>Today's sessions</div>
+          <div style={styles.sectionLabel}>{isViewingToday ? "Today's sessions" : `Day ${selectedDay}'s sessions`}</div>
           <div style={styles.sessionLog}>
             {currentData.sessions.length === 0 && !isRunningToday && (
-              <div style={styles.emptyNote}>No sessions yet — hit "Start Studying" when you sit down.</div>
+              <div style={styles.emptyNote}>
+                {isViewingToday ? 'No sessions yet — hit "Start Studying" when you sit down.' : "No sessions logged for this day."}
+              </div>
             )}
             {currentData.sessions.map((s, idx) => {
               const prevEnd = idx > 0 ? currentData.sessions[idx - 1].end : null;
@@ -387,7 +467,7 @@ export default function App() {
           </div>
 
           {/* Topics checklist */}
-          <div style={styles.sectionLabel}>Today's topics ({topicsDone}/{currentData.topics.length})</div>
+          <div style={styles.sectionLabel}>{isViewingToday ? "Today's topics" : `Day ${selectedDay}'s topics`} ({topicsDone}/{currentData.topics.length})</div>
           <div style={styles.taskList}>
             {currentData.topics.map((t) => (
               <div key={t.id} style={styles.taskRow}>
@@ -453,10 +533,11 @@ function LegendDot({ color, label }) {
 }
 
 const styles = {
-  wrap: { fontFamily: "'Space Grotesk', sans-serif", background: "#12151C", color: "#E8E6E0", padding: "28px 24px 40px", minHeight: "600px", borderRadius: "12px", boxSizing: "border-box" },
+  wrap: { fontFamily: "'Space Grotesk', sans-serif", background: "#12151C", color: "#E8E6E0", padding: "28px 24px 40px", minHeight: "600px", boxSizing: "border-box" },
   header: { display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "16px", marginBottom: "18px" },
   eyebrow: { fontFamily: "'JetBrains Mono', monospace", fontSize: "11px", letterSpacing: "1.5px", color: "#8A93A6", marginBottom: "6px" },
   h1: { fontSize: "26px", margin: 0, fontWeight: 700, letterSpacing: "-0.5px" },
+  startedNote: { fontSize: "11px", color: "#8A93A6", marginTop: "4px", fontFamily: "'JetBrains Mono', monospace" },
   h2: { fontSize: "20px", margin: "2px 0 0", fontWeight: 600 },
   statRow: { display: "flex", gap: "10px" },
   statBox: { background: "#1A1F2B", padding: "8px 14px", borderRadius: "8px", minWidth: "84px", textAlign: "center" },
@@ -481,6 +562,7 @@ const styles = {
   timerTarget: { fontSize: "16px", color: "#8A93A6", fontWeight: 500 },
   timerSub: { fontSize: "12px", color: "#8A93A6", marginTop: "4px" },
   timerBtn: { border: "none", color: "#12151C", fontWeight: 700, padding: "12px 20px", borderRadius: "8px", cursor: "pointer", fontSize: "14px" },
+  lockNote: { fontSize: "12px", color: "#F2A93B", background: "#242A38", padding: "10px 14px", borderRadius: "8px", maxWidth: "260px", lineHeight: 1.4 },
   sectionLabel: { fontSize: "11px", color: "#8A93A6", letterSpacing: "0.5px", marginBottom: "8px", marginTop: "18px", textTransform: "uppercase" },
   sessionLog: { display: "flex", flexDirection: "column", gap: "4px", marginBottom: "6px" },
   sessionRow: { display: "flex", justifyContent: "space-between", background: "#12151C", padding: "8px 12px", borderRadius: "6px", fontSize: "13px", fontFamily: "'JetBrains Mono', monospace" },
